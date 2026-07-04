@@ -1,0 +1,63 @@
+package com.tyron.codeassist.ai
+
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.io.IOException
+
+class GroqAIService(private val apiKey: String) {
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+
+    private val JSON = "application/json; charset=utf-8".toMediaType()
+
+    suspend fun generateCode(prompt: String, currentFileContent: String): String? {
+        val fullPrompt = """
+            You are an expert coding assistant. The user is editing a file with this content:
+            ---
+            $currentFileContent
+            ---
+            Task: $prompt
+            Respond with ONLY the new/modified code. Do not add explanations, markdown, or extra text.
+        """.trimIndent()
+
+        val json = JSONObject().apply {
+            put("model", "llama3-70b-8192")
+            put("messages", org.json.JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", fullPrompt)
+                })
+            })
+            put("temperature", 0.2)
+            put("max_tokens", 2048)
+        }
+
+        val request = Request.Builder()
+            .url("https://api.groq.com/openai/v1/chat/completions")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .post(json.toString().toRequestBody(JSON))
+            .build()
+
+        return try {
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) {
+                return "ERROR: ${response.code} - ${response.message}"
+            }
+            val body = response.body?.string() ?: return "ERROR: empty response"
+            val jsonResponse = JSONObject(body)
+            jsonResponse.getJSONArray("choices")
+                .getJSONObject(0)
+                .getJSONObject("message")
+                .getString("content")
+        } catch (e: IOException) {
+            "ERROR: Network error - ${e.message}"
+        } catch (e: Exception) {
+            "ERROR: ${e.message}"
+        }
+    }
+}
